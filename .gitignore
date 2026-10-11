@@ -1,0 +1,41 @@
+# Virtual environment
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# PyTorch and Model weights
+*.pt
+*.onnx
+*.weights
+models/*.pt
+!models/.gitkeep
+
+# Output directories & evidence
+outputs/evidence/*
+!outputs/evidence/.gitkeep
+outputs/annotated_videos/*
+!outputs/annotated_videos/.gitkeep
+outputs/uploads/*
+!outputs/uploads/.gitkeep
+data/samples/*
+!data/samples/.gitkeep
+
+# Database
+*.db
+*.sqlite3
+
+# Environment & IDE
+.env
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/

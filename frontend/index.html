@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Traffic Violation Detection System</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <i class="fa-solid fa-traffic-light brand-icon"></i>
+                <div class="brand-text">
+                    <h2>TrafficGuard AI</h2>
+                    <span>Vision Enforcement</span>
+                </div>
+            </div>
+
+            <nav class="nav-menu">
+                <button class="nav-item active" data-tab="dashboard">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <span>Dashboard</span>
+                </button>
+                <button class="nav-item" data-tab="video-analysis">
+                    <i class="fa-solid fa-video"></i>
+                    <span>Video Analysis</span>
+                </button>
+                <button class="nav-item" data-tab="violations">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>Violations Review</span>
+                    <span class="badge" id="pending-badge">0</span>
+                </button>
+                <button class="nav-item" data-tab="settings">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Settings & Calibration</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-status">
+                <div class="status-indicator">
+                    <span class="dot online"></span>
+                    <span id="system-device-text">Device: Initializing...</span>
+                </div>
+                <div class="status-sub" id="model-status-text">Model: YOLOv8n Active</div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div class="header-title">
+                    <h1 id="page-title">Executive Dashboard</h1>
+                    <p id="page-subtitle">Real-time traffic compliance and violation metrics</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="btn-refresh" title="Refresh Data">
+                        <i class="fa-solid fa-rotate-right"></i> Refresh
+                    </button>
+                    <button class="btn btn-primary" id="btn-quick-sample">
+                        <i class="fa-solid fa-play"></i> Run Demo Video
+                    </button>
+                </div>
+            </header>
+
+            <!-- TAB 1: DASHBOARD -->
+            <section id="tab-dashboard" class="tab-pane active">
+                <div class="metrics-grid">
+                    <div class="card metric-card total">
+                        <div class="metric-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-label">Total Violations</span>
+                            <h3 class="metric-value" id="stat-total">0</h3>
+                        </div>
+                    </div>
+                    <div class="card metric-card red-light">
+                        <div class="metric-icon"><i class="fa-solid fa-ban"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-label">Signal Jumps</span>
+                            <h3 class="metric-value" id="stat-red-light">0</h3>
+                        </div>
+                    </div>
+                    <div class="card metric-card triple-riding">
+                        <div class="metric-icon"><i class="fa-solid fa-users"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-label">Triple Riding</span>
+                            <h3 class="metric-value" id="stat-triple-riding">0</h3>
+                        </div>
+                    </div>
+                    <div class="card metric-card helmet">
+                        <div class="metric-icon"><i class="fa-solid fa-hard-hat"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-label">No Helmet</span>
+                            <h3 class="metric-value" id="stat-no-helmet">0</h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-row">
+                    <!-- Review Pipeline Summary -->
+                    <div class="card pipeline-card">
+                        <h3><i class="fa-solid fa-list-check"></i> Verification Pipeline</h3>
+                        <div class="pipeline-stats">
+                            <div class="pipeline-item pending">
+                                <span class="dot"></span>
+                                <span class="label">Pending Review:</span>
+                                <strong id="stat-pending">0</strong>
+                            </div>
+                            <div class="pipeline-item confirmed">
+                                <span class="dot"></span>
+                                <span class="label">Confirmed:</span>
+                                <strong id="stat-confirmed">0</strong>
+                            </div>
+                            <div class="pipeline-item dismissed">
+                                <span class="dot"></span>
+                                <span class="label">Dismissed:</span>
+                                <strong id="stat-dismissed">0</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Information -->
+                    <div class="card sys-info-card">
+                        <h3><i class="fa-solid fa-server"></i> System Health & Vision Engine</h3>
+                        <div class="info-list" id="system-health-list">
+                            <div class="info-row"><span>Status:</span> <strong class="badge-success">Operational</strong></div>
+                            <div class="info-row"><span>Device:</span> <strong id="health-device">Checking...</strong></div>
+                            <div class="info-row"><span>CUDA Support:</span> <strong id="health-cuda">Checking...</strong></div>
+                            <div class="info-row"><span>Plate OCR:</span> <strong>EasyOCR / Preprocessed CLAHE</strong></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Events Table -->
+                <div class="card recent-events-card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Recent Candidate Violations</h3>
+                        <button class="btn btn-sm btn-link" onclick="switchTab('violations')">View All</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Event ID</th>
+                                    <th>Type</th>
+                                    <th>Vehicle Plate</th>
+                                    <th>Confidence</th>
+                                    <th>Severity</th>
+                                    <th>Status</th>
+                                    <th>Timestamp</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-events-tbody">
+                                <tr><td colspan="7" class="text-center">No violation events recorded yet.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: VIDEO ANALYSIS -->
+            <section id="tab-video-analysis" class="tab-pane">
+                <div class="analysis-grid">
+                    <!-- Upload Card -->
+                    <div class="card upload-card">
+                        <h3><i class="fa-solid fa-cloud-arrow-up"></i> Upload Traffic Video</h3>
+                        <p class="subtitle">Supports MP4, AVI, MOV recordings (up to 500 MB)</p>
+                        
+                        <div class="drop-zone" id="drop-zone">
+                            <i class="fa-solid fa-film drop-icon"></i>
+                            <h4>Drag and drop traffic footage here</h4>
+                            <span>or browse from your computer</span>
+                            <input type="file" id="video-file-input" accept=".mp4,.avi,.mov,.mkv" style="display: none;">
+                            <button class="btn btn-secondary mt-2" onclick="document.getElementById('video-file-input').click()">
+                                Select Video File
+                            </button>
+                        </div>
+
+                        <div class="quick-demo-box mt-3">
+                            <span>Ready to test without uploading?</span>
+                            <button class="btn btn-primary btn-sm" id="btn-process-sample">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Process Sample Demo Video
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Processing Status & Playback -->
+                    <div class="card playback-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-play-circle"></i> Video Processing & Output</h3>
+                            <div class="header-btns">
+                                <button class="btn btn-sm btn-secondary" id="btn-reset-analysis" title="Clear current analysis session and prepare for a new video">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Reset Analysis
+                                </button>
+                                <a class="btn btn-sm btn-primary hidden" id="btn-download-video" target="_blank" download>
+                                    <i class="fa-solid fa-download"></i> Download Video
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- Error Message Container -->
+                        <div id="video-error-box" class="alert-danger hidden mt-2"></div>
+                        
+                        <!-- Progress Bar Block -->
+                        <div id="processing-progress-box" class="progress-box hidden mt-2">
+                            <div class="progress-labels">
+                                <span id="progress-status-label">Processing video...</span>
+                                <span id="progress-percent">0%</span>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-fill" id="progress-fill"></div>
+                            </div>
+                            <div class="progress-details">
+                                <span id="progress-frames">Frame: 0 / 0</span>
+                                <span id="progress-fps">FPS: 0.0</span>
+                                <span id="progress-violations">Violations: 0</span>
+                            </div>
+                        </div>
+
+                        <!-- Video Player -->
+                        <div class="video-player-container mt-2">
+                            <video id="annotated-video-player" controls preload="metadata" playsinline style="width: 100%; display: none; border-radius: 8px;">
+                                Your browser does not support the video tag.
+                            </video>
+                            <div id="video-placeholder" class="video-placeholder">
+                                <i class="fa-solid fa-circle-play"></i>
+                                <p>Processed video with tracking and violation markers will appear here.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: VIOLATIONS REVIEW -->
+            <section id="tab-violations" class="tab-pane">
+                <div class="card filter-card">
+                    <div class="filters-row">
+                        <div class="filter-group">
+                            <label><i class="fa-solid fa-filter"></i> Violation Type</label>
+                            <select id="filter-type" class="form-select">
+                                <option value="">All Types</option>
+                                <option value="RED_LIGHT_CROSSING">Red Light Crossing</option>
+                                <option value="TRIPLE_RIDING">Triple Riding</option>
+                                <option value="NO_HELMET">No Helmet</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label><i class="fa-solid fa-stamp"></i> Review Status</label>
+                            <select id="filter-status" class="form-select">
+                                <option value="">All Statuses</option>
+                                <option value="PENDING_REVIEW">Pending Review</option>
+                                <option value="CONFIRMED_BY_REVIEWER">Confirmed</option>
+                                <option value="DISMISSED">Dismissed</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group search-group">
+                            <label><i class="fa-solid fa-magnifying-glass"></i> Search Plate or ID</label>
+                            <input type="text" id="filter-search" class="form-input" placeholder="e.g. MH12AB1234...">
+                        </div>
+
+                        <div class="filter-group action-group">
+                            <label>&nbsp;</label>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" id="btn-apply-filters">Filter</button>
+                                <button class="btn btn-danger" id="btn-clear-history" title="Permanently clear all historical violation events from the database">
+                                    <i class="fa-solid fa-trash-can"></i> Clear History
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card table-card mt-3">
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Evidence</th>
+                                    <th>Event Type</th>
+                                    <th>Plate Number</th>
+                                    <th>Confidence</th>
+                                    <th>Severity</th>
+                                    <th>Status</th>
+                                    <th>Timestamp</th>
+                                    <th>Review Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="violations-table-tbody">
+                                <tr><td colspan="8" class="text-center">Loading violations...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 4: SETTINGS & CALIBRATION -->
+            <section id="tab-settings" class="tab-pane">
+                <div class="settings-grid">
+                    <!-- Vision & Detection Thresholds -->
+                    <div class="card">
+                        <h3><i class="fa-solid fa-sliders"></i> Vision Engine Configuration</h3>
+                        
+                        <div class="form-group mt-3">
+                            <label>Confidence Threshold: <span id="val-conf">0.35</span></label>
+                            <input type="range" id="input-conf" min="0.1" max="0.9" step="0.05" value="0.35" class="form-range">
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label>Frame Skip (Speedup on CPU): <span id="val-skip">1</span></label>
+                            <input type="range" id="input-skip" min="1" max="5" step="1" value="1" class="form-range">
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-signal" checked>
+                                <span>Enable Red-Light Crossing Detection</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-triple" checked>
+                                <span>Enable Triple-Riding Detection (≥ 3 riders)</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-helmet" checked>
+                                <span>Enable Helmet Violation Detection</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-plate" checked>
+                                <span>Enable License Plate Crop & OCR</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-privacy">
+                                <span>Enable Privacy Blurring (Faces & Plates in preview)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Red Light Calibration -->
+                    <div class="card">
+                        <h3><i class="fa-solid fa-compass-drafting"></i> Stop Line & Signal Calibration</h3>
+                        <p class="subtitle">Normalized coordinates [0.0 - 1.0] for camera scene calibration</p>
+
+                        <div class="form-group mt-2">
+                            <label>Stop Line [x1, y1, x2, y2]:</label>
+                            <div class="coord-inputs">
+                                <input type="number" step="0.01" id="stop-x1" value="0.05" class="form-input">
+                                <input type="number" step="0.01" id="stop-y1" value="0.65" class="form-input">
+                                <input type="number" step="0.01" id="stop-x2" value="0.95" class="form-input">
+                                <input type="number" step="0.01" id="stop-y2" value="0.65" class="form-input">
+                            </div>
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label>Signal ROI [x1, y1, x2, y2]:</label>
+                            <div class="coord-inputs">
+                                <input type="number" step="0.01" id="sig-x1" value="0.75" class="form-input">
+                                <input type="number" step="0.01" id="sig-y1" value="0.05" class="form-input">
+                                <input type="number" step="0.01" id="sig-x2" value="0.95" class="form-input">
+                                <input type="number" step="0.01" id="sig-y2" value="0.30" class="form-input">
+                            </div>
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label>Signal Light State Mode:</label>
+                            <select id="select-sig-mode" class="form-select">
+                                <option value="red">Force RED (Rule verification / Demo mode)</option>
+                                <option value="auto_detect">Auto-detect from HSV Color Thresholding</option>
+                                <option value="green">Force GREEN (No violations)</option>
+                                <option value="yellow">Force YELLOW</option>
+                            </select>
+                        </div>
+
+                        <div class="mt-4">
+                            <button class="btn btn-primary" id="btn-save-settings">
+                                <i class="fa-solid fa-floppy-disk"></i> Save Calibration Settings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Violation Detail & Review Modal -->
+    <div id="review-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Review Violation Event</h3>
+                <button class="btn-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-evidence-box">
+                    <img id="modal-evidence-img" src="" alt="Evidence Frame">
+                </div>
+                <div class="modal-details">
+                    <div class="modal-detail-row">
+                        <span>Event ID:</span>
+                        <strong id="modal-event-id">-</strong>
+                    </div>
+                    <div class="modal-detail-row">
+                        <span>Violation Type:</span>
+                        <strong id="modal-event-type">-</strong>
+                    </div>
+                    <div class="modal-detail-row">
+                        <span>Tracking ID:</span>
+                        <strong id="modal-track-id">-</strong>
+                    </div>
+                    <div class="modal-detail-row">
+                        <span>AI Confidence:</span>
+                        <strong id="modal-confidence">-</strong>
+                    </div>
+                    <div class="modal-detail-row">
+                        <span>Timestamp:</span>
+                        <strong id="modal-timestamp">-</strong>
+                    </div>
+
+                    <div class="plate-edit-group mt-3">
+                        <label>License Plate OCR Text:</label>
+                        <div class="input-with-button">
+                            <input type="text" id="modal-plate-input" class="form-input">
+                            <button class="btn btn-sm btn-secondary" id="btn-update-plate">Update Plate</button>
+                        </div>
+                    </div>
+
+                    <div class="notes-group mt-3">
+                        <label>Reviewer Notes:</label>
+                        <textarea id="modal-notes-input" class="form-textarea" rows="2"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="btn-modal-dismiss">
+                    <i class="fa-solid fa-xmark"></i> Dismiss Violation
+                </button>
+                <button class="btn btn-success" id="btn-modal-confirm">
+                    <i class="fa-solid fa-check"></i> Confirm Violation
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
