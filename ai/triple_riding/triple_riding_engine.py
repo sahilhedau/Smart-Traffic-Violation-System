@@ -71,6 +71,18 @@ class TripleRidingDetector:
 
         return overlap_ratio >= 0.45 and vertical_valid and horizontal_valid
 
+    def associate_riders(
+        self,
+        motorcycles: List[DetectionResult],
+        persons: List[DetectionResult]
+    ) -> Dict[Any, List[DetectionResult]]:
+        """Maps motorcycle index/track_id to list of associated rider DetectionResults."""
+        mapping: Dict[Any, List[DetectionResult]] = {}
+        for idx, moto in enumerate(motorcycles):
+            key = moto.track_id if moto.track_id is not None else idx
+            mapping[key] = [p for p in persons if self.is_rider_on_motorcycle(p, moto)]
+        return mapping
+
     def process_frame(
         self,
         motorcycles: List[DetectionResult],

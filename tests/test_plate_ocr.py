@@ -24,3 +24,31 @@ def test_plate_image_preprocessing():
     assert preprocessed is not None
     assert len(preprocessed.shape) == 2  # Grayscale
     assert preprocessed.shape[0] == 70  # Standardized target height
+
+
+def test_ocr_compares_multiscale_variants_and_prefers_valid_plate_format():
+    engine = PlateRecognitionEngine()
+
+    class MockReader:
+        def __init__(self):
+            self.images = []
+            self.results = [
+                [(None, "ABC1234", 0.95)],
+                [(None, "MH12AB1234", 0.42)],
+                [(None, "MH12AB1234", 0.45)],
+            ]
+
+        def readtext(self, image, **kwargs):
+            self.images.append(image)
+            return self.results[len(self.images) - 1]
+
+    engine.reader = MockReader()
+    crop = np.full((28, 120, 3), 160, dtype=np.uint8)
+
+    text, raw_text, confidence = engine.recognize_crop(crop)
+
+    assert text == "MH12AB1234"
+    assert raw_text == "MH12AB1234"
+    assert confidence == 0.45
+    assert len(engine.reader.images) == 3
+    assert engine.reader.images[1].shape[0] == 140

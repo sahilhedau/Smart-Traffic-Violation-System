@@ -14,6 +14,7 @@ from backend.app.api.events import router as events_router
 from backend.app.api.video import router as video_router
 from backend.app.api.settings import router as settings_router
 from backend.app.api.stats import router as stats_router
+from backend.app.api.image import router as image_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +54,7 @@ app.include_router(events_router, prefix="/api")
 app.include_router(video_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(stats_router, prefix="/api")
+app.include_router(image_router, prefix="/api")
 
 @app.get("/api/health", tags=["system"])
 def health_check():

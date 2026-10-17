@@ -30,6 +30,7 @@ class SettingsService:
             calibration=CalibrationSettings(
                 stop_line=config.STOP_LINE,
                 signal_roi=config.SIGNAL_ROI,
+                signal_rois=[config.SIGNAL_ROI],
                 signal_mode=config.SIGNAL_MODE
             )
         )

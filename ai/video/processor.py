@@ -44,6 +44,7 @@ class VideoProcessor:
         # Track active violations per tracking ID to display persistent annotations
         self.active_violations: Dict[int, List[str]] = {}
         self.recognized_plates: Dict[int, str] = {}
+        self.tracked_plate_boxes: Dict[int, List[float]] = {}
 
     def process(self) -> Dict[str, Any]:
         """Runs end-to-end video processing and violation detection."""
@@ -101,7 +102,9 @@ class VideoProcessor:
         signal_detector = SignalJumpDetector(
             stop_line=self.settings.calibration.stop_line,
             signal_roi=self.settings.calibration.signal_roi,
-            signal_mode=self.settings.calibration.signal_mode
+            signal_mode=self.settings.calibration.signal_mode,
+            signal_rois=self.settings.calibration.signal_rois,
+            stop_lines=self.settings.calibration.stop_lines
         )
         
         triple_detector = TripleRidingDetector(
@@ -149,9 +152,17 @@ class VideoProcessor:
                 persons = [d for d in detections if d.class_name == "person"]
 
                 # 1. Signal Jump / Red-Light Violation Detection
+                traffic_lights = [d for d in detections if d.class_name == "traffic light"]
+                signal_states = signal_detector.determine_signal_states(frame, traffic_lights)
                 if self.settings.enable_signal_jump:
                     trajectories = {t_id: tracker_mgr.get_trajectory(t_id) for t_id in tracker_mgr.tracks}
-                    sig_violations = signal_detector.check_violations(frame, vehicles, trajectories)
+                    sig_violations = signal_detector.check_violations(
+                        frame,
+                        vehicles,
+                        trajectories,
+                        traffic_light_detections=traffic_lights,
+                        signal_states=signal_states
+                    )
                     for v in sig_violations:
                         t_id = v["tracking_id"]
                         v_created = self._handle_candidate_violation(
@@ -161,7 +172,7 @@ class VideoProcessor:
                             confidence=v["confidence"],
                             severity=Severity.HIGH,
                             box=v["box"],
-                            notes=f"Vehicle #{t_id} crossed stop line on RED light",
+                            notes=f"Vehicle #{t_id} crossed stop line {v['stop_line_index'] + 1} on RED light",
                             plate_engine=plate_engine
                         )
                         if v_created:
@@ -221,12 +232,46 @@ class VideoProcessor:
                                 self.active_violations[t_id] = []
                             self.active_violations[t_id].append("NO HELMET")
 
-                # Overlay traffic signal and stop line
-                signal_state, _ = signal_detector.determine_signal_state(frame)
-                signal_detector.draw_overlay(frame, signal_state)
+                # 4. Continuous Number Plate Detection & Recognition on Tracked Vehicles
+                frame_plate_boxes = {}
+                if plate_engine is not None and len(vehicles) > 0:
+                    try:
+                        detected_plates = plate_engine.detect_plates_yolo(frame)
+                        for p_det in detected_plates:
+                            p_box = p_det["box"]  # [px1, py1, px2, py2]
+                            p_cx = (p_box[0] + p_box[2]) / 2.0
+                            p_cy = (p_box[1] + p_box[3]) / 2.0
 
-                # Draw detections, track labels, and active violation banners
-                self._draw_detections(frame, detections, moto_rider_counts, tracker_mgr)
+                            # Match plate with overlapping vehicle
+                            matched_t_id = None
+                            for v in vehicles:
+                                vx1, vy1, vx2, vy2 = v.box
+                                if vx1 <= p_cx <= vx2 and vy1 <= p_cy <= vy2:
+                                    matched_t_id = v.track_id
+                                    break
+
+                            if matched_t_id is not None:
+                                frame_plate_boxes[matched_t_id] = p_box
+                                self.tracked_plate_boxes[matched_t_id] = p_box
+                                # If vehicle plate text not yet recognized, run OCR
+                                if matched_t_id not in self.recognized_plates or self.recognized_plates[matched_t_id] == "UNREADABLE":
+                                    px1, py1, px2, py2 = [int(c) for c in p_box]
+                                    hf, wf = frame.shape[:2]
+                                    px1, py1 = max(0, px1), max(0, py1)
+                                    px2, py2 = min(wf, px2), min(hf, py2)
+                                    if px2 > px1 and py2 > py1:
+                                        plate_crop = frame[py1:py2, px1:px2]
+                                        norm_txt, raw_txt, ocr_conf = plate_engine.recognize_crop(plate_crop)
+                                        if norm_txt != "UNREADABLE":
+                                            self.recognized_plates[matched_t_id] = norm_txt
+                    except Exception as e:
+                        logger.debug("Error during continuous plate detection: %s", e)
+
+                # Overlay traffic signal and stop line
+                signal_detector.draw_overlay(frame, signal_states, traffic_lights)
+
+                # Draw detections, track labels, plate bounding boxes, and active violation banners
+                self._draw_detections(frame, detections, moto_rider_counts, tracker_mgr, frame_plate_boxes)
 
                 # Draw top status HUD bar
                 elapsed = time.time() - start_time
@@ -419,9 +464,10 @@ class VideoProcessor:
         frame: np.ndarray,
         detections: List[DetectionResult],
         moto_rider_counts: Dict[int, int],
-        tracker_mgr: TrackHistoryManager
+        tracker_mgr: TrackHistoryManager,
+        frame_plate_boxes: Optional[Dict[int, List[float]]] = None
     ):
-        """Draws bounding boxes, labels, and trajectory paths with highlighted violations."""
+        """Draws bounding boxes, labels, plate boxes, and trajectory paths with highlighted violations."""
         color_map = {
             "car": (255, 170, 0),
             "motorcycle": (0, 210, 255),
@@ -461,14 +507,33 @@ class VideoProcessor:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 2
                 )
 
-            # Display recognized license plate below vehicle
-            if t_id is not None and t_id in self.recognized_plates:
-                plate = self.recognized_plates[t_id]
-                cv2.rectangle(frame, (x1, min(frame.shape[0], y2 + 2)), (min(frame.shape[1], x1 + 130), min(frame.shape[0], y2 + 22)), (255, 255, 255), -1)
+            # Display recognized license plate box & badge
+            if frame_plate_boxes and t_id is not None and t_id in frame_plate_boxes:
+                p_box = frame_plate_boxes[t_id]
+                px1, py1, px2, py2 = [int(c) for c in p_box]
+                # High-visibility Emerald plate box
+                cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 128), 2)
+                plate = self.recognized_plates.get(t_id, "")
+                badge_text = f"IND: {plate}" if (plate and plate != "UNREADABLE") else "PLATE"
+                (tw, th), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                by1 = max(0, py1 - th - 6)
+                by2 = py1
+                bx2 = min(frame.shape[1], px1 + tw + 8)
+                cv2.rectangle(frame, (px1, by1), (bx2, by2), (15, 23, 42), -1)
                 cv2.putText(
-                    frame, plate, (x1 + 4, min(frame.shape[0] - 2, y2 + 18)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2
+                    frame, badge_text, (px1 + 4, py1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1, cv2.LINE_AA
                 )
+            elif t_id is not None and t_id in self.recognized_plates:
+                plate = self.recognized_plates[t_id]
+                if plate != "UNREADABLE":
+                    badge_text = f"IND: {plate}"
+                    (tw, th), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                    cv2.rectangle(frame, (x1, min(frame.shape[0], y2 + 2)), (min(frame.shape[1], x1 + tw + 10), min(frame.shape[0], y2 + th + 10)), (15, 23, 42), -1)
+                    cv2.putText(
+                        frame, badge_text, (x1 + 4, min(frame.shape[0] - 2, y2 + th + 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1, cv2.LINE_AA
+                    )
 
             # Draw trajectory tail for tracked objects
             if t_id is not None:

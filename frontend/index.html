@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Traffic Violation Detection System</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=4">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -27,6 +27,10 @@
                 <button class="nav-item" data-tab="video-analysis">
                     <i class="fa-solid fa-video"></i>
                     <span>Video Analysis</span>
+                </button>
+                <button class="nav-item" data-tab="image-analysis">
+                    <i class="fa-solid fa-camera"></i>
+                    <span>Snapshot Detection</span>
                 </button>
                 <button class="nav-item" data-tab="violations">
                     <i class="fa-solid fa-triangle-exclamation"></i>
@@ -129,7 +133,7 @@
                             <div class="info-row"><span>Status:</span> <strong class="badge-success">Operational</strong></div>
                             <div class="info-row"><span>Device:</span> <strong id="health-device">Checking...</strong></div>
                             <div class="info-row"><span>CUDA Support:</span> <strong id="health-cuda">Checking...</strong></div>
-                            <div class="info-row"><span>Plate OCR:</span> <strong>EasyOCR / Preprocessed CLAHE</strong></div>
+                            <div class="info-row"><span>Plate OCR:</span> <strong>EasyOCR / Multi-pass enhancement</strong></div>
                         </div>
                     </div>
                 </div>
@@ -177,6 +181,19 @@
                             <button class="btn btn-secondary mt-2" onclick="document.getElementById('video-file-input').click()">
                                 Select Video File
                             </button>
+                        </div>
+
+                        <div id="staged-video-panel" class="staged-video-panel hidden">
+                            <strong id="staged-video-name"></strong>
+                            <p id="staged-video-status">Video uploaded. Set calibration before starting analysis.</p>
+                            <div class="header-btns">
+                                <button class="btn btn-secondary" id="btn-calibrate-uploaded-video">
+                                    <i class="fa-solid fa-compass-drafting"></i> Calibrate This Video
+                                </button>
+                                <button class="btn btn-primary" id="btn-start-analysis" disabled>
+                                    <i class="fa-solid fa-play"></i> Start Analysis
+                                </button>
+                            </div>
                         </div>
 
                         <div class="quick-demo-box mt-3">
@@ -228,6 +245,95 @@
                             <div id="video-placeholder" class="video-placeholder">
                                 <i class="fa-solid fa-circle-play"></i>
                                 <p>Processed video with tracking and violation markers will appear here.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2.5: SNAPSHOT / IMAGE DETECTION -->
+            <section id="tab-image-analysis" class="tab-pane">
+                <div class="analysis-grid">
+                    <!-- Image Upload Card -->
+                    <div class="card upload-card">
+                        <h3><i class="fa-solid fa-camera"></i> Traffic Snapshot Detection</h3>
+                        <p class="subtitle">Upload traffic photo for instant YOLO detection, helmet check & plate OCR (JPG, PNG, WEBP)</p>
+                        
+                        <div class="drop-zone" id="image-drop-zone">
+                            <i class="fa-solid fa-image drop-icon"></i>
+                            <h4>Drag and drop traffic photo here</h4>
+                            <span>or browse from your device</span>
+                            <input type="file" id="image-file-input" accept=".jpg,.jpeg,.png,.webp,.bmp" style="display: none;">
+                            <button class="btn btn-secondary mt-2" onclick="document.getElementById('image-file-input').click()">
+                                Select Image File
+                            </button>
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="check-save-img-violations" checked>
+                                <span>Save detected violations to database for review</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Image Results & Annotated Preview -->
+                    <div class="card playback-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-magnifying-glass-chart"></i> Detection & Recognition Output</h3>
+                            <div class="header-btns">
+                                <button class="btn btn-sm btn-secondary" id="btn-reset-image" title="Reset current snapshot analysis">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Reset
+                                </button>
+                                <a class="btn btn-sm btn-primary hidden" id="btn-download-image" target="_blank" download>
+                                    <i class="fa-solid fa-download"></i> Save Image
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- Image Error Box -->
+                        <div id="image-error-box" class="alert-danger hidden mt-2"></div>
+
+                        <!-- Image Loading Spinner -->
+                        <div id="image-loading-box" class="progress-box hidden mt-2 text-center" style="padding: 1.5rem;">
+                            <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 1.8rem; color: var(--primary);"></i>
+                            <p class="mt-2" style="font-weight: 500;">Running YOLO object detection, helmet verification & OCR...</p>
+                        </div>
+
+                        <!-- Output Metrics Strip -->
+                        <div id="image-metrics-strip" class="metrics-grid hidden mt-2" style="grid-template-columns: repeat(4, 1fr); gap: 8px;">
+                            <div class="card metric-card" style="padding: 10px;">
+                                <span class="metric-label">Vehicles</span>
+                                <h4 class="metric-value" id="img-stat-vehicles">0</h4>
+                            </div>
+                            <div class="card metric-card" style="padding: 10px;">
+                                <span class="metric-label">Helmets</span>
+                                <h4 class="metric-value" id="img-stat-helmets">0</h4>
+                            </div>
+                            <div class="card metric-card" style="padding: 10px;">
+                                <span class="metric-label">Plates OCR</span>
+                                <h4 class="metric-value" id="img-stat-plates">0</h4>
+                            </div>
+                            <div class="card metric-card total" style="padding: 10px;">
+                                <span class="metric-label">Violations</span>
+                                <h4 class="metric-value" id="img-stat-violations" style="color: #ef4444;">0</h4>
+                            </div>
+                        </div>
+
+                        <!-- Image Display Container -->
+                        <div class="video-player-container mt-2" style="min-height: 280px; display: flex; align-items: center; justify-content: center; background: #0b0f19; border-radius: 8px;">
+                            <img id="annotated-image-preview" src="" alt="Annotated Preview" style="max-width: 100%; max-height: 480px; display: none; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                            <div id="image-placeholder" class="video-placeholder">
+                                <i class="fa-solid fa-image" style="font-size: 2.5rem; opacity: 0.4;"></i>
+                                <p>Uploaded snapshot with YOLO detections, helmet status, and license plate badges will appear here.</p>
+                            </div>
+                        </div>
+
+                        <!-- Detailed Findings Panel -->
+                        <div id="image-findings-panel" class="hidden mt-3">
+                            <h4 style="font-size: 0.95rem; margin-bottom: 8px; color: var(--text-muted);"><i class="fa-solid fa-list-check"></i> Inspection Details</h4>
+                            <div id="image-findings-content" class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Dynamic findings generated via JS -->
                             </div>
                         </div>
                     </div>
@@ -354,33 +460,45 @@
                     <!-- Red Light Calibration -->
                     <div class="card">
                         <h3><i class="fa-solid fa-compass-drafting"></i> Stop Line & Signal Calibration</h3>
-                        <p class="subtitle">Normalized coordinates [0.0 - 1.0] for camera scene calibration</p>
+                        <p class="subtitle">Use the uploaded video to calibrate the exact camera view before starting analysis.</p>
+
+                        <div id="calibration-video-link" class="staged-video-panel hidden">
+                            <strong id="calibration-video-name"></strong>
+                            <p id="calibration-prediction-status">Detecting suggested stop line and signal boxes…</p>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-return-to-video">
+                                Return to Video Analysis
+                            </button>
+                        </div>
 
                         <div class="form-group mt-2">
-                            <label>Stop Line [x1, y1, x2, y2]:</label>
-                            <div class="coord-inputs">
-                                <input type="number" step="0.01" id="stop-x1" value="0.05" class="form-input">
-                                <input type="number" step="0.01" id="stop-y1" value="0.65" class="form-input">
-                                <input type="number" step="0.01" id="stop-x2" value="0.95" class="form-input">
-                                <input type="number" step="0.01" id="stop-y2" value="0.65" class="form-input">
+                            <label for="calibration-media-input">Camera frame or video:</label>
+                            <input type="file" id="calibration-media-input" accept="image/*,video/*" class="form-input hidden">
+                            <button type="button" class="btn btn-secondary btn-sm mt-2 hidden" id="btn-use-uploaded-video">
+                                Use video uploaded for analysis
+                            </button>
+                            <input type="range" id="calibration-frame-seek" min="0" max="0" step="0.1" class="form-input hidden" aria-label="Choose calibration video frame">
+                            <div id="calibration-preview" class="calibration-preview hidden">
+                                <canvas id="calibration-canvas" class="calibration-canvas"></canvas>
                             </div>
+                            <p id="calibration-help" class="subtitle mt-2">Drag line endpoints or signal-box handles to adjust them. Use each approach's sliders for precise positioning.</p>
                         </div>
 
                         <div class="form-group mt-3">
-                            <label>Signal ROI [x1, y1, x2, y2]:</label>
-                            <div class="coord-inputs">
-                                <input type="number" step="0.01" id="sig-x1" value="0.75" class="form-input">
-                                <input type="number" step="0.01" id="sig-y1" value="0.05" class="form-input">
-                                <input type="number" step="0.01" id="sig-x2" value="0.95" class="form-input">
-                                <input type="number" step="0.01" id="sig-y2" value="0.30" class="form-input">
+                            <div class="card-header">
+                                <label>Signal Boxes [x1, y1, x2, y2] (normalized 0–1):</label>
+                                <button type="button" class="btn btn-secondary btn-sm" id="btn-add-signal-roi">
+                                    <i class="fa-solid fa-plus"></i> Add Signal Box
+                                </button>
                             </div>
+                            <div id="signal-roi-list"></div>
+                            <p class="subtitle mt-2">Each signal box is paired with its own stop line. A red signal only applies to vehicles crossing that approach's line.</p>
                         </div>
 
                         <div class="form-group mt-3">
                             <label>Signal Light State Mode:</label>
                             <select id="select-sig-mode" class="form-select">
+                                <option value="auto_detect">Auto-detect red/yellow/green (YOLO boxes + color)</option>
                                 <option value="red">Force RED (Rule verification / Demo mode)</option>
-                                <option value="auto_detect">Auto-detect from HSV Color Thresholding</option>
                                 <option value="green">Force GREEN (No violations)</option>
                                 <option value="yellow">Force YELLOW</option>
                             </select>
@@ -455,6 +573,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>

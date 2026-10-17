@@ -2,16 +2,20 @@ import os
 import uuid
 import shutil
 import logging
+import math
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
+import cv2
+import numpy as np
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.config import config
 from backend.app.database.db import get_db_connection
 from backend.app.schemas.video import JobStatusResponse, VideoUploadResponse, JobStatus
+from ai.detection.detector import ObjectDetector
 from ai.video.processor import VideoProcessor
 
 logger = logging.getLogger("traffic_system.api.video")
@@ -19,6 +23,108 @@ router = APIRouter(prefix="/video", tags=["video"])
 
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
+_calibration_detector: Optional[ObjectDetector] = None
+
+
+def suggest_stop_line(frame: np.ndarray) -> Optional[list[float]]:
+    """Suggest a likely road stop bar from long, near-horizontal edges."""
+    height, width = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 50, 150)
+    segments = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=max(20, width // 12),
+        minLineLength=max(30, width // 8),
+        maxLineGap=max(10, width // 50),
+    )
+    if segments is None:
+        return None
+
+    candidates = []
+    for segment in segments.reshape(-1, 4):
+        x1, y1, x2, y2 = map(int, segment)
+        delta_x, delta_y = x2 - x1, y2 - y1
+        length = math.hypot(delta_x, delta_y)
+        midpoint_y = (y1 + y2) / 2
+        if length < width * 0.12 or not height * 0.35 <= midpoint_y <= height * 0.92:
+            continue
+        if abs(delta_y) > max(12, abs(delta_x) * 0.25):
+            continue
+        candidates.append((length * (0.5 + midpoint_y / height), x1, y1, x2, y2))
+
+    if not candidates:
+        return None
+
+    _, x1, y1, x2, y2 = max(candidates)
+    if x1 > x2:
+        x1, y1, x2, y2 = x2, y2, x1, y1
+    return [x1 / width, y1 / height, x2 / width, y2 / height]
+
+
+@router.get("/calibrate/{job_id}")
+def suggest_video_calibration(job_id: str):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT source_filename FROM processing_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Job not found")
+        source_path = Path(row["source_filename"])
+        if not source_path.is_file():
+            raise HTTPException(status_code=404, detail="Source video file missing on disk")
+    finally:
+        conn.close()
+
+    capture = cv2.VideoCapture(str(source_path))
+    if not capture.isOpened():
+        raise HTTPException(status_code=422, detail="Could not open the uploaded video for calibration")
+    try:
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        if frame_count > 1:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_count // 4)
+        success, frame = capture.read()
+        if not success:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            success, frame = capture.read()
+        if not success or frame is None:
+            raise HTTPException(status_code=422, detail="Could not read a frame from the uploaded video")
+        frame_time_seconds = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000
+    finally:
+        capture.release()
+
+    global _calibration_detector
+    if _calibration_detector is None:
+        _calibration_detector = ObjectDetector(
+            model_name=str(config.MODELS_DIR / config.YOLO_MODEL_NAME),
+            device=config.DEVICE,
+            conf_threshold=0.15,
+        )
+
+    detections = _calibration_detector.detect_and_track(frame, persist=False)
+    height, width = frame.shape[:2]
+    signal_rois = [
+        [
+            max(0.0, min(1.0, detection.box[0] / width)),
+            max(0.0, min(1.0, detection.box[1] / height)),
+            max(0.0, min(1.0, detection.box[2] / width)),
+            max(0.0, min(1.0, detection.box[3] / height)),
+        ]
+        for detection in detections
+        if detection.class_name == "traffic light"
+    ]
+    signal_rois.sort(key=lambda roi: (roi[2] - roi[0]) * (roi[3] - roi[1]), reverse=True)
+
+    return {
+        "width": width,
+        "height": height,
+        "frame_time_seconds": frame_time_seconds,
+        "stop_line": suggest_stop_line(frame),
+        "signal_rois": signal_rois,
+        "signal_model": config.YOLO_MODEL_NAME,
+    }
 
 def run_video_job(job_id: str, video_path: str, is_demo: bool = False):
     try:
@@ -110,21 +216,29 @@ def start_processing(job_id: str, background_tasks: BackgroundTasks):
         if not row:
             raise HTTPException(status_code=404, detail="Job not found")
 
+        if row["status"] != JobStatus.QUEUED.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job cannot be started while it is {row['status'].lower()}."
+            )
+
         source_path = row["source_filename"]
         if not Path(source_path).exists():
             raise HTTPException(status_code=404, detail="Source video file missing on disk")
 
         # Launch processing in background task to avoid blocking the event loop
-        background_tasks.add_task(run_video_job, job_id, source_path, False)
-
-        # Update status to PROCESSING
         now = datetime.now(timezone.utc).isoformat()
         with conn:
-            conn.execute("UPDATE processing_jobs SET status = ?, updated_at = ? WHERE id = ?",
-                         (JobStatus.PROCESSING.value, now, job_id))
+            cursor = conn.execute(
+                "UPDATE processing_jobs SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (JobStatus.PROCESSING.value, now, job_id, JobStatus.QUEUED.value)
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=409, detail="Job has already been started.")
 
         cursor = conn.execute("SELECT * FROM processing_jobs WHERE id = ?", (job_id,))
         row = cursor.fetchone()
+        background_tasks.add_task(run_video_job, job_id, source_path, False)
         return _row_to_job(row)
     finally:
         conn.close()

@@ -23,10 +23,17 @@ class SystemConfig(BaseModel):
     DATABASE_PATH: Path = BASE_DIR / "traffic_system.db"
 
     # Vision & Model Parameters
-    DEVICE: str = "auto"  # 'auto', 'cuda', 'cpu'
-    YOLO_MODEL_NAME: str = "yolov8n.pt"
-    HELMET_MODEL_NAME: str = "helmet_yolov8n.pt"  # optional specialized or baseline
-    PLATE_MODEL_NAME: str = "plate_yolov8n.pt"    # optional specialized or baseline
+    DEVICE: str = Field(default_factory=lambda: os.getenv("VISION_DEVICE", "auto"))  # 'auto', 'cuda', 'cpu'
+    YOLO_MODEL_NAME: str = Field(default_factory=lambda: os.getenv("YOLO_MODEL_NAME", "yolov8n.pt"))
+    HELMET_MODEL_NAME: str = Field(default_factory=lambda: os.getenv("HELMET_MODEL_NAME", "helmet_yolov8n.pt"))
+    PLATE_MODEL_NAME: str = Field(default_factory=lambda: os.getenv("PLATE_MODEL_NAME", "plate_yolov8n.pt"))
+    HELMET_CLASSES: List[str] = ["With Helmet", "Without Helmet"]
+    PLATE_CLASSES: List[str] = ["license_plate"]
+    
+    # Dataset Directories
+    HELMET_DATASET_DIR: Path = BASE_DIR / "data" / "helmet_dataset"
+    PLATE_DATASET_DIR: Path = BASE_DIR / "data" / "plate_dataset"
+
     CONFIDENCE_THRESHOLD: float = 0.35
     IOU_THRESHOLD: float = 0.45
     FRAME_SKIP: int = 1
@@ -47,18 +54,19 @@ class SystemConfig(BaseModel):
     # Signal ROI: [x1, y1, x2, y2]
     SIGNAL_ROI: List[float] = [0.75, 0.05, 0.95, 0.30]
     # Signal mode: 'auto_detect', 'red', 'yellow', 'green'
-    SIGNAL_MODE: str = "red"
+    SIGNAL_MODE: str = "auto_detect"
 
     # Triple Riding settings
     MIN_RIDERS_FOR_ALERT: int = 3
     TRIPLE_RIDING_MIN_FRAMES: int = 3
 
     # Helmet settings
-    HELMET_MIN_CONFIDENCE: float = 0.40
+    HELMET_MIN_CONFIDENCE: float = 0.30
     HELMET_SMOOTHING_FRAMES: int = 3
 
     # Plate OCR settings
     OCR_MIN_CONFIDENCE: float = 0.30
+    PLATE_MIN_CONFIDENCE: float = 0.35
     OCR_ENGINE: str = "easyocr"  # 'easyocr'
 
     def ensure_directories(self):
@@ -70,6 +78,8 @@ class SystemConfig(BaseModel):
             self.ANNOTATED_VIDEOS_DIR,
             self.UPLOADS_DIR,
             self.SAMPLES_DIR,
+            self.HELMET_DATASET_DIR,
+            self.PLATE_DATASET_DIR,
         ]:
             directory.mkdir(parents=True, exist_ok=True)
 
