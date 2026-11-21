@@ -619,18 +619,49 @@ function closeModal() {
 
 document.getElementById("btn-modal-confirm").addEventListener("click", async () => {
     if (!activeEventForReview) return;
-    await updateEventStatus(activeEventForReview.id, "CONFIRMED_BY_REVIEWER");
-    closeModal();
-    loadDashboardStats();
-    loadViolationsTable();
+    try {
+        const updated = await updateEventStatus(
+            activeEventForReview.id,
+            "CONFIRMED_BY_REVIEWER"
+        );
+        showTelegramNotificationStatus(updated.telegram_notification_status);
+        closeModal();
+        loadDashboardStats();
+        loadViolationsTable();
+    } catch (err) {
+        alert(`Could not confirm violation: ${err.message}`);
+    }
 });
+
+function showTelegramNotificationStatus(status) {
+    const toast = document.getElementById("notification-status-toast");
+    const messages = {
+        SENT: ["Telegram alert sent.", "sent"],
+        FAILED: ["Violation confirmed; Telegram alert failed. Retry it from the command line.", "failed"],
+        NOT_CONFIGURED: ["Violation confirmed; Telegram is not configured.", "failed"],
+        SENDING: ["Violation confirmed; Telegram alert is being sent.", ""]
+    };
+    const message = messages[status];
+    if (!message) return;
+
+    toast.textContent = message[0];
+    toast.className = `notification-status-toast visible ${message[1]}`.trim();
+    window.clearTimeout(toast.hideTimer);
+    toast.hideTimer = window.setTimeout(() => {
+        toast.classList.remove("visible");
+    }, 7000);
+}
 
 document.getElementById("btn-modal-dismiss").addEventListener("click", async () => {
     if (!activeEventForReview) return;
-    await updateEventStatus(activeEventForReview.id, "DISMISSED");
-    closeModal();
-    loadDashboardStats();
-    loadViolationsTable();
+    try {
+        await updateEventStatus(activeEventForReview.id, "DISMISSED");
+        closeModal();
+        loadDashboardStats();
+        loadViolationsTable();
+    } catch (err) {
+        alert(`Could not dismiss violation: ${err.message}`);
+    }
 });
 
 document.getElementById("btn-update-plate").addEventListener("click", async () => {
@@ -657,13 +688,25 @@ document.getElementById("btn-update-plate").addEventListener("click", async () =
 async function updateEventStatus(eventId, newStatus) {
     const notes = document.getElementById("modal-notes-input").value.trim();
     try {
-        await fetch(`/api/events/${eventId}`, {
+        const res = await fetch(`/api/events/${eventId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: newStatus, reviewer_notes: notes })
+            body: JSON.stringify({
+                status: newStatus,
+                reviewer_notes: notes,
+                ...(newStatus === "CONFIRMED_BY_REVIEWER" ? {
+                    plate_text: document.getElementById("modal-plate-input").value.trim().toUpperCase()
+                } : {})
+            })
         });
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.detail || `Request failed (${res.status})`);
+        }
+        return await res.json();
     } catch (err) {
         console.error("Error updating event status:", err);
+        throw err;
     }
 }
 

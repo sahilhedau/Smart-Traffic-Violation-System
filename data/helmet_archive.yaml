@@ -1,0 +1,8 @@
+# Auto-generated dataset config for Helmet Archive Dataset (764 raw samples)
+path: D:/Smart-Traffic-Violation-System/data/helmet_archive_yolo
+train: D:/Smart-Traffic-Violation-System/data/helmet_archive_yolo/train/images
+val: D:/Smart-Traffic-Violation-System/data/helmet_archive_yolo/val/images
+test: D:/Smart-Traffic-Violation-System/data/helmet_archive_yolo/test/images
+
+nc: 2
+names: ['With Helmet', 'Without Helmet']

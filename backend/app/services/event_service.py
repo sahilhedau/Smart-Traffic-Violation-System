@@ -181,6 +181,118 @@ class EventService:
             conn.close()
 
     @staticmethod
+    def confirm_event(
+        event_id: str,
+        update_in: ViolationEventUpdate
+    ) -> tuple[Optional[ViolationEventResponse], bool]:
+        """Persist reviewer confirmation and atomically queue its first notification."""
+        conn = get_db_connection()
+        should_notify = False
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status FROM violation_events WHERE id = ?",
+                (event_id,)
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                return None, False
+
+            should_notify = row["status"] != ReviewStatus.CONFIRMED_BY_REVIEWER.value
+            fields = ["status = ?", "updated_at = ?"]
+            params: List[Any] = [
+                ReviewStatus.CONFIRMED_BY_REVIEWER.value,
+                datetime.now(timezone.utc).isoformat(),
+            ]
+            if should_notify:
+                fields.extend([
+                    "telegram_notification_status = ?",
+                    "telegram_notification_error = NULL",
+                    "telegram_notification_sent_at = NULL",
+                ])
+                params.append("PENDING")
+            if update_in.plate_text is not None:
+                fields.append("plate_text = ?")
+                params.append(update_in.plate_text)
+            if update_in.reviewer_notes is not None:
+                fields.append("reviewer_notes = ?")
+                params.append(update_in.reviewer_notes)
+
+            params.append(event_id)
+            conn.execute(
+                f"UPDATE violation_events SET {', '.join(fields)} WHERE id = ?",
+                params
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return EventService.get_event(event_id), should_notify
+
+    @staticmethod
+    def claim_telegram_notification(event_id: str, retry: bool = False) -> bool:
+        """Claim an eligible confirmed event so concurrent requests cannot double-send."""
+        allowed_statuses = ("PENDING",)
+        if retry:
+            allowed_statuses = ("PENDING", "FAILED", "NOT_CONFIGURED")
+
+        conn = get_db_connection()
+        try:
+            placeholders = ", ".join("?" for _ in allowed_statuses)
+            with conn:
+                cursor = conn.execute(
+                    f"""
+                    UPDATE violation_events
+                    SET telegram_notification_status = 'SENDING',
+                        telegram_notification_error = NULL
+                    WHERE id = ?
+                      AND status = ?
+                      AND telegram_notification_status IN ({placeholders})
+                    """,
+                    (
+                        event_id,
+                        ReviewStatus.CONFIRMED_BY_REVIEWER.value,
+                        *allowed_statuses,
+                    )
+                )
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
+    @staticmethod
+    def update_telegram_notification(
+        event_id: str,
+        status: str,
+        error: Optional[str] = None,
+        sent_at: Optional[str] = None
+    ) -> None:
+        conn = get_db_connection()
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE violation_events
+                    SET telegram_notification_status = ?,
+                        telegram_notification_error = ?,
+                        telegram_notification_sent_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        status,
+                        error,
+                        sent_at,
+                        datetime.now(timezone.utc).isoformat(),
+                        event_id,
+                    )
+                )
+        finally:
+            conn.close()
+
+    @staticmethod
     def get_statistics() -> DashboardStatsResponse:
         conn = get_db_connection()
         try:
@@ -260,4 +372,7 @@ class EventService:
             reviewer_notes=row["reviewer_notes"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            telegram_notification_status=row["telegram_notification_status"],
+            telegram_notification_error=row["telegram_notification_error"],
+            telegram_notification_sent_at=row["telegram_notification_sent_at"],
         )

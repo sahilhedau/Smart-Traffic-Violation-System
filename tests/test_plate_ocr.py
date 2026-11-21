@@ -23,7 +23,7 @@ def test_plate_image_preprocessing():
     preprocessed = engine.preprocess_plate_image(dummy_crop)
     assert preprocessed is not None
     assert len(preprocessed.shape) == 2  # Grayscale
-    assert preprocessed.shape[0] == 70  # Standardized target height
+    assert preprocessed.shape[0] == 80  # Upscales small crops while preserving resolution
 
 
 def test_ocr_compares_multiscale_variants_and_prefers_valid_plate_format():
@@ -36,6 +36,7 @@ def test_ocr_compares_multiscale_variants_and_prefers_valid_plate_format():
                 [(None, "ABC1234", 0.95)],
                 [(None, "MH12AB1234", 0.42)],
                 [(None, "MH12AB1234", 0.45)],
+                [(None, "MH12AB1234", 0.39)],
             ]
 
         def readtext(self, image, **kwargs):
@@ -50,5 +51,56 @@ def test_ocr_compares_multiscale_variants_and_prefers_valid_plate_format():
     assert text == "MH12AB1234"
     assert raw_text == "MH12AB1234"
     assert confidence == 0.45
-    assert len(engine.reader.images) == 3
+    assert len(engine.reader.images) == 4
     assert engine.reader.images[1].shape[0] == 140
+
+
+def test_ocr_returns_low_confidence_valid_guess_for_manual_review():
+    engine = PlateRecognitionEngine()
+
+    class MockReader:
+        def readtext(self, image, **kwargs):
+            return [(None, "MH12AB1234", 0.12)]
+
+    engine.reader = MockReader()
+
+    text, raw_text, confidence = engine.recognize_crop(
+        np.full((12, 80, 3), 160, dtype=np.uint8)
+    )
+
+    assert text == "MH12AB1234"
+    assert raw_text == "MH12AB1234"
+    assert confidence == 0.12
+    assert engine.is_verified_plate(text, confidence) is False
+
+
+def test_plate_recognition_retries_heuristic_crop_when_yolo_crop_is_unreadable():
+    engine = PlateRecognitionEngine()
+    frame = np.full((100, 160, 3), 100, dtype=np.uint8)
+    heuristic_crop = np.full((18, 70, 3), 200, dtype=np.uint8)
+    engine.detect_plates_yolo = lambda image, confidence_threshold=None: [
+        {"box": [10, 10, 40, 25], "confidence": 0.18}
+    ]
+    engine.find_plate_candidate_region = lambda image, include_yolo=True: heuristic_crop
+
+    ocr_calls = []
+
+    def recognize_crop(crop):
+        ocr_calls.append(crop)
+        if len(ocr_calls) == 1:
+            return "UNREADABLE", "", 0.0
+        return "MH12AB1234", "MH12AB1234", 0.22
+
+    engine.recognize_crop = recognize_crop
+
+    text, raw_text, confidence, crop = engine.recognize_plate(
+        frame,
+        [20, 10, 100, 70]
+    )
+
+    assert text == "MH12AB1234"
+    assert raw_text == "MH12AB1234"
+    assert confidence == 0.22
+    assert crop is heuristic_crop
+    assert len(ocr_calls) == 3
+    assert engine.last_plate_box is None

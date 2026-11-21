@@ -47,6 +47,9 @@ class ViolationEventResponse(ViolationEventBase):
     id: str
     created_at: str
     updated_at: str
+    telegram_notification_status: str = "NOT_SENT"
+    telegram_notification_error: Optional[str] = None
+    telegram_notification_sent_at: Optional[str] = None
 
 class PaginatedEventsResponse(BaseModel):
     total: int

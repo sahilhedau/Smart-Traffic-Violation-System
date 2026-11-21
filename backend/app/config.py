@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
 from typing import List, Tuple
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 # Root directory of the repository
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 class SystemConfig(BaseModel):
     # Server settings

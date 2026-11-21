@@ -66,7 +66,7 @@ class PlateRecognitionEngine:
             return plate_crop
 
         h, w = plate_crop.shape[:2]
-        target_h = 70
+        target_h = max(70, min(280, h * 2))
         aspect = w / float(h) if h > 0 else 1.0
         target_w = max(10, int(target_h * aspect))
         resized = cv2.resize(plate_crop, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
@@ -101,9 +101,19 @@ class PlateRecognitionEngine:
             31,
             11
         )
-        return [enhanced, enlarged, thresholded]
+        _, otsu = cv2.threshold(
+            enlarged,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        return [enhanced, enlarged, thresholded, otsu]
 
-    def detect_plates_yolo(self, image: np.ndarray) -> List[Dict[str, Any]]:
+    def detect_plates_yolo(
+        self,
+        image: np.ndarray,
+        confidence_threshold: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
         """
         Runs YOLO inference specifically to detect license plate bounding boxes.
         Returns list of detections: [{'box': [x1, y1, x2, y2], 'confidence': float}]
@@ -115,7 +125,7 @@ class PlateRecognitionEngine:
         try:
             results = self.plate_model.predict(
                 source=image,
-                conf=self.plate_min_conf,
+                conf=confidence_threshold if confidence_threshold is not None else self.plate_min_conf,
                 verbose=False
             )
             if not results or len(results) == 0 or results[0].boxes is None:
@@ -134,7 +144,11 @@ class PlateRecognitionEngine:
 
         return plates
 
-    def find_plate_candidate_region(self, vehicle_crop: np.ndarray) -> Optional[np.ndarray]:
+    def find_plate_candidate_region(
+        self,
+        vehicle_crop: np.ndarray,
+        include_yolo: bool = True
+    ) -> Optional[np.ndarray]:
         """
         Locates plate using YOLO if model is loaded; otherwise uses morphological gradient candidate extraction.
         """
@@ -142,7 +156,7 @@ class PlateRecognitionEngine:
             return None
 
         # 1. Try YOLO plate detector first
-        if self.plate_model is not None:
+        if include_yolo and self.plate_model is not None:
             detected = self.detect_plates_yolo(vehicle_crop)
             if detected:
                 # Pick the highest confidence detection
@@ -294,7 +308,12 @@ class PlateRecognitionEngine:
                     variant,
                     detail=1,
                     paragraph=False,
-                    allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                    allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                    text_threshold=0.5,
+                    low_text=0.2,
+                    link_threshold=0.3,
+                    contrast_ths=0.05,
+                    adjust_contrast=0.7
                 )
             except Exception as error:
                 logger.debug("Error during plate crop OCR pass: %s", error)
@@ -303,20 +322,34 @@ class PlateRecognitionEngine:
             recognized = [
                 (text.strip(), float(confidence))
                 for _, text, confidence in ocr_results or []
-                if text.strip() and confidence >= self.ocr_min_conf
+                if text.strip() and confidence > 0.0
             ]
             if not recognized:
                 continue
-            raw_text = " ".join(text for text, _ in recognized)
-            confidence = float(np.mean([score for _, score in recognized]))
-            normalized = self.normalize_plate_text(raw_text)
-            if normalized == "UNREADABLE":
-                continue
-            is_indian_format = bool(re.fullmatch(
-                r"[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{3,4}",
-                normalized
-            ))
-            candidates.append((normalized, raw_text, confidence, is_indian_format))
+            for text, confidence in recognized:
+                normalized = self.normalize_plate_text(text)
+                if normalized == "UNREADABLE":
+                    continue
+                is_indian_format = bool(re.fullmatch(
+                    r"[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{3,4}",
+                    normalized
+                ))
+                candidates.append((normalized, text, confidence, is_indian_format))
+
+            if len(recognized) > 1:
+                raw_text = " ".join(text for text, _ in recognized)
+                normalized = self.normalize_plate_text(raw_text)
+                if normalized != "UNREADABLE":
+                    is_indian_format = bool(re.fullmatch(
+                        r"[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{3,4}",
+                        normalized
+                    ))
+                    candidates.append((
+                        normalized,
+                        raw_text,
+                        float(np.mean([score for _, score in recognized])),
+                        is_indian_format
+                    ))
 
         if not candidates:
             return "UNREADABLE", "", 0.0
@@ -380,20 +413,84 @@ class PlateRecognitionEngine:
             return "UNREADABLE", "", 0.0, None
 
         vehicle_crop = frame[vy1:vy2, vx1:vx2]
-        plate_candidate, local_box = self.find_plate_with_box(vehicle_crop)
-        if plate_candidate is None:
-            plate_candidate = vehicle_crop
+        vehicle_h, vehicle_w = vehicle_crop.shape[:2]
+        candidates: List[Tuple[np.ndarray, Optional[List[float]]]] = []
 
-        if local_box is not None:
+        detections = self.detect_plates_yolo(
+            vehicle_crop,
+            confidence_threshold=max(0.12, self.plate_min_conf * 0.6)
+        )
+        for detection in sorted(
+            detections,
+            key=lambda item: item["confidence"],
+            reverse=True
+        )[:2]:
+            x1, y1, x2, y2 = map(int, detection["box"])
+            pad_x = max(2, int((x2 - x1) * 0.12))
+            pad_y = max(2, int((y2 - y1) * 0.15))
+            x1, y1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+            x2, y2 = min(vehicle_w, x2 + pad_x), min(vehicle_h, y2 + pad_y)
+            if x2 > x1 and y2 > y1:
+                candidates.append((
+                    vehicle_crop[y1:y2, x1:x2],
+                    [float(x1), float(y1), float(x2), float(y2)]
+                ))
+
+        heuristic_candidate = self.find_plate_candidate_region(
+            vehicle_crop,
+            include_yolo=False
+        )
+        if heuristic_candidate is not None and heuristic_candidate.size > 0:
+            candidates.append((heuristic_candidate, None))
+
+        candidates.append((vehicle_crop, None))
+
+        plate_results = []
+        for candidate_crop, local_box in candidates:
+            normalized, raw_text, confidence = self.recognize_crop(candidate_crop)
+            if normalized == "UNREADABLE":
+                continue
+
+            is_indian_format = bool(re.fullmatch(
+                r"[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{3,4}",
+                normalized
+            ))
+            plate_results.append((
+                normalized,
+                raw_text,
+                confidence,
+                is_indian_format,
+                candidate_crop,
+                local_box
+            ))
+
+            if is_indian_format and confidence >= self.ocr_min_conf:
+                break
+
+        if not plate_results:
+            return "UNREADABLE", "", 0.0, candidates[0][0] if candidates else vehicle_crop
+
+        counts: Dict[str, int] = {}
+        for normalized, *_ in plate_results:
+            counts[normalized] = counts.get(normalized, 0) + 1
+        best = max(
+            plate_results,
+            key=lambda result: (
+                result[3],
+                counts[result[0]],
+                result[2]
+            )
+        )
+
+        if best[5] is not None:
             self.last_plate_box = [
-                vx1 + local_box[0],
-                vy1 + local_box[1],
-                vx1 + local_box[2],
-                vy1 + local_box[3]
+                vx1 + best[5][0],
+                vy1 + best[5][1],
+                vx1 + best[5][2],
+                vy1 + best[5][3]
             ]
 
-        normalized, raw_text, confidence = self.recognize_crop(plate_candidate)
-        return normalized, raw_text, confidence, plate_candidate
+        return best[0], best[1], best[2], best[4]
 
     def detect_and_recognize_all(self, frame: np.ndarray, vehicle_boxes: List[List[float]]) -> List[Dict[str, Any]]:
         """

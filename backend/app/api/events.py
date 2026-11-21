@@ -12,6 +12,7 @@ from backend.app.schemas.event import (
     ReviewStatus,
 )
 from backend.app.services.event_service import EventService
+from backend.app.services.telegram_notification_service import TelegramNotificationService
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -42,6 +43,14 @@ def get_event(event_id: str):
 
 @router.patch("/{event_id}", response_model=ViolationEventResponse)
 def update_event(event_id: str, update: ViolationEventUpdate):
+    if update.status == ReviewStatus.CONFIRMED_BY_REVIEWER:
+        updated, should_notify = EventService.confirm_event(event_id, update)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Violation event not found")
+        if should_notify:
+            TelegramNotificationService.notify_confirmed_event(event_id)
+        return EventService.get_event(event_id)
+
     updated = EventService.update_event(event_id, update)
     if not updated:
         raise HTTPException(status_code=404, detail="Violation event not found")

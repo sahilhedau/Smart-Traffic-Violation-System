@@ -1,0 +1,8 @@
+# Curated Plate Detection Subset for Fast, Accurate Fine-Tuning
+path: D:/Smart-Traffic-Violation-System
+train: D:/Smart-Traffic-Violation-System/data/plate_subset/train_subset.txt
+val: D:/Smart-Traffic-Violation-System/data/plate_subset/val_subset.txt
+test: C:/Users/sahil/Downloads/images/test
+
+nc: 1
+names: ['license_plate']

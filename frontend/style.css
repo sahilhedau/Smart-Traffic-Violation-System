@@ -647,6 +647,27 @@ body {
     margin-top: 20px;
 }
 
+.notification-status-toast {
+    display: none;
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2000;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 12px 16px;
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--primary);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 13px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+.notification-status-toast.visible { display: block; }
+.notification-status-toast.sent { border-left-color: var(--success); }
+.notification-status-toast.failed { border-left-color: var(--warning); }
+
 .hidden { display: none !important; }
 .mt-2 { margin-top: 8px; }
 .mt-3 { margin-top: 14px; }

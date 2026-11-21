@@ -82,6 +82,28 @@ Interactive API documentation is accessible at:
 http://127.0.0.1:8000/docs
 ```
 
+### Telegram Confirmation Notifications (Optional)
+
+Telegram notifications are sent only after a reviewer confirms a violation. Copy
+`.env.example` to `.env`, then set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+to the values for your bot and destination chat. Keep `.env` private; it is
+excluded from Git. Restart the application after changing these values.
+
+Send a labeled test message without exposing a test endpoint:
+```powershell
+.\.venv\Scripts\python.exe scripts\telegram_test.py
+```
+
+If an event confirmation was saved while Telegram was unavailable, notification
+failures are recorded on the event and can be retried with:
+```powershell
+.\.venv\Scripts\python.exe scripts\telegram_test.py --retry-event <event-id>
+```
+
+The Telegram status is stored separately from the review status, so Telegram
+failures never undo a confirmation. When a readable local evidence image is
+available it is attached; otherwise the bot sends the violation details as text.
+
 ### 3. Upload, Calibrate, and Start
 
 In **Video Analysis**, upload a traffic video. Uploading stages the file without running violation analysis and opens **Settings & Calibration** with the same video. The app suggests a stop line using image-edge detection and signal boxes using the pretrained YOLO traffic-light class. Review those suggestions, drag line endpoints or signal boxes on the preview, or use the X/Y and box-edge sliders. Each approach has its own signal box and paired stop line; adding or removing an approach updates both together. Calibration changes save automatically. Return to Video Analysis and press **Start Analysis** when ready. Signal-state classification uses the saved regions and HSV color detection.

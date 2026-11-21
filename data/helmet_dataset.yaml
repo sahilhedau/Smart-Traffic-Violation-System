@@ -1,0 +1,8 @@
+# Auto-generated dataset configuration for TrafficGuard AI Helmet Detection
+path: C:/Users/sahil/Downloads/Bike-Helmets-Detection.v1i.yolov5pytorch
+train: C:/Users/sahil/Downloads/Bike-Helmets-Detection.v1i.yolov5pytorch/train/images
+val: C:/Users/sahil/Downloads/Bike-Helmets-Detection.v1i.yolov5pytorch/valid/images
+test: C:/Users/sahil/Downloads/Bike-Helmets-Detection.v1i.yolov5pytorch/test/images
+
+nc: 2
+names: ['With Helmet', 'Without Helmet']

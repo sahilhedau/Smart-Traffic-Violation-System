@@ -14,6 +14,10 @@ __pycache__/
 models/*.pt
 !models/.gitkeep
 
+# YOLO training runs & caches
+runs/
+*.cache
+
 # Output directories & evidence
 outputs/evidence/*
 !outputs/evidence/.gitkeep
@@ -23,6 +27,11 @@ outputs/uploads/*
 !outputs/uploads/.gitkeep
 data/samples/*
 !data/samples/.gitkeep
+
+# Large local datasets (downloaded & generated from scripts)
+data/helmet_archive_yolo/
+data/helmet_dataset/
+data/plate_dataset/
 
 # Database
 *.db

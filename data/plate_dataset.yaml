@@ -1,0 +1,8 @@
+# Dataset configuration for License Plate Detection (TrafficGuard AI)
+path: C:/Users/sahil/Downloads
+train: images/train
+val: images/val
+test: images/test
+
+nc: 1
+names: ['license_plate']

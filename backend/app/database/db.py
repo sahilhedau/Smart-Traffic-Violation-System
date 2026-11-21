@@ -42,10 +42,27 @@ def _create_tables(conn: sqlite3.Connection):
             plate_confidence REAL DEFAULT 0.0,
             details_json TEXT,
             reviewer_notes TEXT,
+            telegram_notification_status TEXT NOT NULL DEFAULT 'NOT_SENT',
+            telegram_notification_error TEXT,
+            telegram_notification_sent_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
         """)
+        event_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(violation_events)").fetchall()
+        }
+        notification_columns = {
+            "telegram_notification_status": "TEXT NOT NULL DEFAULT 'NOT_SENT'",
+            "telegram_notification_error": "TEXT",
+            "telegram_notification_sent_at": "TEXT",
+        }
+        for column, definition in notification_columns.items():
+            if column not in event_columns:
+                conn.execute(
+                    f"ALTER TABLE violation_events ADD COLUMN {column} {definition}"
+                )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON violation_events(event_type);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_status ON violation_events(status);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_created ON violation_events(created_at);")
